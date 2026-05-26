@@ -19,6 +19,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +30,9 @@ class CoincidenciasServiceTest {
 
     @InjectMocks
     private CoincidenciasService coincidenciasService;
+
+    @Mock
+    private NotificacionClient notificacionClient;
 
     private Coincidencias coincidenciaPendiente;
     private ReporteCruzeDTO reporteNuevo;
@@ -55,7 +59,7 @@ class CoincidenciasServiceTest {
 
     @Test
     void procesarNuevasCoincidencias_GuardaMatch_SiEstaDentroDelRadio() {
-        // Arrange: Creamos un candidato con coordenadas idénticas (Distancia = 0 km)
+        // Arrange
         ReporteCruzeDTO candidatoCerca = new ReporteCruzeDTO();
         candidatoCerca.setId(20L);
         candidatoCerca.setTipoReporte("ENCONTRADO");
@@ -65,8 +69,11 @@ class CoincidenciasServiceTest {
         // Act
         coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoCerca));
 
-        // Assert: Verificamos que se guardó 1 vez en la base de datos
+        // Assert
         verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
+        
+        // 2. VERIFICACIÓN CRÍTICA: Aseguramos que la notificación se envió
+        verify(notificacionClient, times(1)).enviarNotificacion(anyString());
     }
 
     @Test
@@ -78,11 +85,14 @@ class CoincidenciasServiceTest {
         candidatoLejos.setLatitud(0.0);
         candidatoLejos.setLongitud(0.0);
 
-        // Act
+       // Act
         coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoLejos));
 
-        // Assert: Verificamos que NUNCA intentó guardar en la base de datos
+        // Assert
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
+        
+        // 3. Verificamos que NO se notificó
+        verify(notificacionClient, never()).enviarNotificacion(anyString());
     }
 
     // --- TESTS PARA LA H.U. -3: DESCARTAR COINCIDENCIA ---
@@ -108,6 +118,46 @@ class CoincidenciasServiceTest {
         });
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatusCode());
+        verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
+    }
+
+    @Test
+    void procesarNuevasCoincidencias_DeberiaLlamarNotificacionClient_CuandoHayMatch() {
+        // Arrange
+        ReporteCruzeDTO candidatoCerca = new ReporteCruzeDTO();
+        candidatoCerca.setId(20L);
+        candidatoCerca.setLatitud(-36.82);
+        candidatoCerca.setLongitud(-73.04);
+        
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoCerca));
+
+        // Assert: Aquí verificamos que, además de guardar, se llamó al cliente de notificaciones
+        verify(notificacionClient, times(1)).enviarNotificacion(anyString());
+    }
+
+    @Test
+    void procesarNuevasCoincidencias_ManejaCorrectamenteReporteEncontrado() {
+        // Arrange: Cambiamos a ENCONTRADO
+        reporteNuevo.setTipoReporte("ENCONTRADO"); 
+        ReporteCruzeDTO candidato = new ReporteCruzeDTO();
+        candidato.setId(20L);
+        candidato.setLatitud(-36.82);
+        candidato.setLongitud(-73.04);
+
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidato));
+
+        // Assert
+        verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
+    }
+
+    @Test
+    void procesarNuevasCoincidencias_NoHaceNada_SiLaListaEsVacia() {
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of());
+
+        // Assert: Verifica que no se guardó nada
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
     }
 }

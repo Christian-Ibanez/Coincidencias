@@ -17,8 +17,12 @@ import com.SanosySalvos.Coincidencias.dto.NotificacionRequestDTO;
 @Service
 public class NotificacionClient {
 
+    private final RestTemplate restTemplate;
+    
     @Autowired
-    private RestTemplate restTemplate;
+    public NotificacionClient(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     @Value("${notificacion.service.url}")
     private String url;

@@ -17,6 +17,9 @@ public class CoincidenciasService {
     @Autowired
     private CoincidenciasRepository coincidenciasRepository;
 
+    @Autowired
+    private NotificacionClient notificacionClient; // Añade esta línea
+
     @Value("${coincidencias.radio-busqueda-km:5.0}")
     private double radioBusquedaKm;
 
@@ -42,8 +45,11 @@ public class CoincidenciasService {
                 coincidencia.setEstado(EstadoCoincidencia.PENDIENTE);
 
                 coincidenciasRepository.save(coincidencia);
+
+                notificacionClient.enviarNotificacion("Nuevo match detectado para reporte: " + coincidencia.getId());
                 System.out.println("🔥 ¡NUEVO MATCH ENCONTRADO! Similitud: " + coincidencia.getPorcentajeSimilitud() + "% a " + Math.round(distanciaKm) + " km.");
             }
+            
         }
     }
 
