@@ -1,48 +1,19 @@
 package com.SanosySalvos.Coincidencias.service;
 
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-
-import org.springframework.http.HttpHeaders;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
 import com.SanosySalvos.Coincidencias.dto.NotificacionRequestDTO;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
-@Service
-public class NotificacionClient {
+@FeignClient(name = "notificacion-service", url = "${notificacion.service.url}")
+public interface NotificacionClient {
 
-    private final RestTemplate restTemplate;
-    
-    @Autowired
-    public NotificacionClient(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
+    @PostMapping
+    @CircuitBreaker(name = "notificacionService", fallbackMethod = "fallbackNotificacion")
+    void enviarNotificacion(@RequestBody NotificacionRequestDTO requestDTO);
+
+    default void fallbackNotificacion(NotificacionRequestDTO requestDTO, Throwable t) {
+        System.err.println("⚠️ El servicio de notificaciones no está disponible. Fallback ejecutado. Causa: " + t.getMessage());
     }
-
-    @Value("${notificacion.service.url}")
-    private String url;
-
-    public void enviarNotificacion(String mensaje) {
-    try {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        // Algunos servidores bloquean peticiones sin User-Agent
-        headers.set("User-Agent", "SanosySalvos-Coincidencias-Service/1.0");
-        
-        // Si él te dio un token de seguridad, descomenta la siguiente línea:
-        // headers.set("Authorization", "Bearer TU_TOKEN_AQUI");
-
-        HttpEntity<String> entity = new HttpEntity<>(mensaje, headers);
-        restTemplate.postForEntity(url, entity, String.class);
-        
-        System.out.println("✅ ¡Notificación enviada!");
-    } catch (Exception e) {
-        System.err.println("❌ Error 403: " + e.getMessage());
-    }
-}
 }

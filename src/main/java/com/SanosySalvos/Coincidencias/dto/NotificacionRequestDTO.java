@@ -1,11 +1,12 @@
 package com.SanosySalvos.Coincidencias.dto;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
+@Getter
+@Setter
 public class NotificacionRequestDTO {
-    private Long reportePerdidoId;
-    private Long reporteEncontradoId;
-    private Double porcentajeSimilitud;
-    private String mensaje; 
+    private String correoDueno;
+    private Long idMascotaPerdida;
+    private Long idMascotaEncontrada;
 }

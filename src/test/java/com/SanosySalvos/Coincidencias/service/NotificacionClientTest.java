@@ -1,48 +1,53 @@
 package com.SanosySalvos.Coincidencias.service;
 
+import com.SanosySalvos.Coincidencias.dto.NotificacionRequestDTO;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.quality.Strictness;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT) // ESTO EVITA EL ERROR DE MISMATCH
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 class NotificacionClientTest {
 
-    @Mock
-    private RestTemplate restTemplate;
+    private final ByteArrayOutputStream errContent = new ByteArrayOutputStream();
+    private final PrintStream originalErr = System.err;
 
-    @InjectMocks
-    private NotificacionClient notificacionClient;
+    // Creamos una implementación anónima "dummy" de la interfaz solo para acceder al método default
+    private final NotificacionClient notificacionClient = new NotificacionClient() {
+        @Override
+        public void enviarNotificacion(NotificacionRequestDTO requestDTO) {
+            // Este método lo implementa Feign en la vida real, no lo probamos aquí
+        }
+    };
 
-    @Test
-    void enviarNotificacion_DeberiaLlamarAlRestTemplate() {
-        ReflectionTestUtils.setField(notificacionClient, "url", "http://test.url");
-        
-        notificacionClient.enviarNotificacion("Test mensaje");
-        
-        verify(restTemplate, times(1)).postForEntity(anyString(), any(), any());
+    @BeforeEach
+    public void setUpStreams() {
+        // Redirigimos la salida de error para poder leer qué imprime el System.err.println
+        System.setErr(new PrintStream(errContent));
+    }
+
+    @AfterEach
+    public void restoreStreams() {
+        // Restauramos la consola a la normalidad
+        System.setErr(originalErr);
     }
 
     @Test
-    void enviarNotificacion_DeberiaManejarErrorEnCatch() {
-        ReflectionTestUtils.setField(notificacionClient, "url", "http://test.url");
-        
-        // Configuramos el mock para que falle
-        when(restTemplate.postForEntity(anyString(), any(), any()))
-            .thenThrow(new RuntimeException("Error simulado"));
+    void fallbackNotificacion_DeberiaManejarElErrorYRegistrarEnConsola() {
+        // 1. Preparamos los datos falsos
+        NotificacionRequestDTO mockRequest = new NotificacionRequestDTO();
+        mockRequest.setCorreoDueno("test@test.com");
+        Throwable mockExcepcion = new RuntimeException("Timeout simulado por el test");
 
-        notificacionClient.enviarNotificacion("Test error");
+        // 2. Ejecutamos tu método fallback directamente
+        notificacionClient.fallbackNotificacion(mockRequest, mockExcepcion);
 
-        verify(restTemplate, times(1)).postForEntity(anyString(), any(), any());
+        // 3. Verificamos que tu mensaje personalizado se imprimió correctamente
+        String salidaConsola = errContent.toString();
+        assertTrue(salidaConsola.contains("Fallback ejecutado"));
+        assertTrue(salidaConsola.contains("Timeout simulado por el test"));
     }
 }

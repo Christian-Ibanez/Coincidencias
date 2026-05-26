@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # 1. LA BASE DE DATOS (Con PostGIS incluido)
+  postgres-db:
+    image: postgis/postgis:16-3.4 # Imagen oficial con soporte geográfico
+    container_name: db_coincidencias
+    environment:
+      POSTGRES_USER: postgres      # Tu usuario
+      POSTGRES_PASSWORD: Conce123 # Reemplaza por tu contraseña
+      POSTGRES_DB: db_coincidencias
+    ports:
+      - "5432:5432"
+    restart: always
+
+  # 2. TU MICROSERVICIO
+  coincidencias-app:
+    build: . # Construye la imagen usando tu Dockerfile
+    container_name: coincidencias_service
+    ports:
+      - "8080:8080" # El puerto donde corre tu app
+    depends_on:
+      - postgres-db # Espera a que la base de datos se levante primero
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/db_coincidencias
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=Conce123

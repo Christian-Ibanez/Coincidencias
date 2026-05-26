@@ -1,5 +1,6 @@
 package com.SanosySalvos.Coincidencias.service;
 
+import com.SanosySalvos.Coincidencias.dto.NotificacionRequestDTO;
 import com.SanosySalvos.Coincidencias.dto.ReporteCruzeDTO;
 import com.SanosySalvos.Coincidencias.model.Coincidencias;
 import com.SanosySalvos.Coincidencias.model.EstadoCoincidencia;
@@ -18,7 +19,7 @@ public class CoincidenciasService {
     private CoincidenciasRepository coincidenciasRepository;
 
     @Autowired
-    private NotificacionClient notificacionClient; // Añade esta línea
+    private NotificacionClient notificacionClient;
 
     @Value("${coincidencias.radio-busqueda-km:5.0}")
     private double radioBusquedaKm;
@@ -46,7 +47,15 @@ public class CoincidenciasService {
 
                 coincidenciasRepository.save(coincidencia);
 
-                notificacionClient.enviarNotificacion("Nuevo match detectado para reporte: " + coincidencia.getId());
+                NotificacionRequestDTO requestDTO = new NotificacionRequestDTO();
+                
+                requestDTO.setIdMascotaPerdida(coincidencia.getReportePerdidoId());
+                requestDTO.setIdMascotaEncontrada(coincidencia.getReporteEncontradoId());
+                
+                requestDTO.setCorreoDueno(reporteNuevo.getCorreoUsuario()); 
+                
+                notificacionClient.enviarNotificacion(requestDTO);
+
                 System.out.println("🔥 ¡NUEVO MATCH ENCONTRADO! Similitud: " + coincidencia.getPorcentajeSimilitud() + "% a " + Math.round(distanciaKm) + " km.");
             }
             
@@ -54,7 +63,7 @@ public class CoincidenciasService {
     }
 
     public Coincidencias descartarCoincidencia(Long id) {
-        // 1. Buscamos la coincidencia en la base de datos
+
         Coincidencias coincidencia = coincidenciasRepository.findById(id)
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.NOT_FOUND, "La coincidencia no existe."));

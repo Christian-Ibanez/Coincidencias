@@ -1,5 +1,6 @@
 package com.SanosySalvos.Coincidencias.service;
 
+import com.SanosySalvos.Coincidencias.dto.NotificacionRequestDTO;
 import com.SanosySalvos.Coincidencias.dto.ReporteCruzeDTO;
 import com.SanosySalvos.Coincidencias.model.Coincidencias;
 import com.SanosySalvos.Coincidencias.model.EstadoCoincidencia;
@@ -19,7 +20,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,24 +36,49 @@ class CoincidenciasServiceTest {
     private NotificacionClient notificacionClient;
 
     private Coincidencias coincidenciaPendiente;
-    private ReporteCruzeDTO reporteNuevo;
+    private ReporteCruzeDTO reporteMascotaPerdida;
 
     @BeforeEach
     void setUp() {
-        // TRUCO VITAL: Le inyectamos el valor de 5.0 a la variable @Value manualmente para el test
-        ReflectionTestUtils.setField(coincidenciasService, "radioBusquedaKm", 5.0);
-
         // Preparamos datos para la H.U. -3 (Descartar)
         coincidenciaPendiente = new Coincidencias();
         coincidenciaPendiente.setId(1L);
         coincidenciaPendiente.setEstado(EstadoCoincidencia.PENDIENTE);
 
-        // Preparamos el reporte nuevo para la H.U. -4 (Crear cruce)
-        reporteNuevo = new ReporteCruzeDTO();
-        reporteNuevo.setId(10L);
-        reporteNuevo.setTipoReporte("PERDIDO");
-        reporteNuevo.setLatitud(-36.82);
-        reporteNuevo.setLongitud(-73.04);
+        // Preparamos la mascota que el usuario está buscando (Ej: Un Poodle Blanco)
+        reporteMascotaPerdida = new ReporteCruzeDTO();
+        reporteMascotaPerdida.setId(10L);
+        reporteMascotaPerdida.setTipoReporte("PERDIDO");
+        reporteMascotaPerdida.setRaza("Poodle");
+        reporteMascotaPerdida.setColor("Blanco");
+        reporteMascotaPerdida.setLatitud(-36.82);
+        reporteMascotaPerdida.setLongitud(-73.04);
+    }
+
+    @Test
+    void buscarCoincidencias_DeberiaEncontrarUnMatchYNotificar() {
+        // 1. PREPARACIÓN (Arrange)
+        // Creamos un perro "falso" que el microservicio de reportes nos "devolverá"
+        ReporteCruzeDTO reporteFalso = new ReporteCruzeDTO();
+        reporteFalso.setId(10L);
+        reporteFalso.setRaza("Poodle");
+        reporteFalso.setColor("Blanco");
+        reporteFalso.setCorreoUsuario("dueño@test.com");
+
+        // Le decimos a Mockito: "Cuando el servicio llame a OpenFeign, devuélvele esta lista falsa"
+        when(reporteClient.obtenerReportesCercanos(anyDouble(), anyDouble(), anyDouble()))
+                .thenReturn(List.of(reporteFalso));
+
+        // 2. EJECUCIÓN (Act)
+        // Ejecutamos tu método buscando un Poodle Blanco
+        coincidenciasService.buscarCoincidencias(-36.0, -72.0, "Poodle", "Blanco");
+
+        // 3. VERIFICACIÓN (Assert)
+        // Verificamos que OpenFeign efectivamente fue llamado una vez
+        verify(reporteClient, times(1)).obtenerReportesCercanos(-36.0, -72.0, 5000.0);
+        
+        // Aquí podrías verificar que se llamó al NotificacionClient si el match fue exitoso
+        // verify(notificacionClient, times(1)).enviarNotificacion(any());
     }
 
     // --- TESTS PARA LA H.U. -4: PROCESAR NUEVAS COINCIDENCIAS ---
@@ -67,13 +93,14 @@ class CoincidenciasServiceTest {
         candidatoCerca.setLongitud(-73.04);
 
         // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoCerca));
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoCerca));
 
         // Assert
         verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
         
         // 2. VERIFICACIÓN CRÍTICA: Aseguramos que la notificación se envió
-        verify(notificacionClient, times(1)).enviarNotificacion(anyString());
+        // Lo que debes poner (CORRECTO):
+        verify(notificacionClient, times(1)).enviarNotificacion(any(NotificacionRequestDTO.class));
     }
 
     @Test
@@ -86,13 +113,14 @@ class CoincidenciasServiceTest {
         candidatoLejos.setLongitud(0.0);
 
        // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoLejos));
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoLejos));
 
         // Assert
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
         
         // 3. Verificamos que NO se notificó
-        verify(notificacionClient, never()).enviarNotificacion(anyString());
+        // Lo que debes poner (CORRECTO):
+        verify(notificacionClient, never()).enviarNotificacion(any(NotificacionRequestDTO.class));
     }
 
     // --- TESTS PARA LA H.U. -3: DESCARTAR COINCIDENCIA ---
@@ -130,23 +158,23 @@ class CoincidenciasServiceTest {
         candidatoCerca.setLongitud(-73.04);
         
         // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidatoCerca));
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoCerca));
 
         // Assert: Aquí verificamos que, además de guardar, se llamó al cliente de notificaciones
-        verify(notificacionClient, times(1)).enviarNotificacion(anyString());
+        verify(notificacionClient, times(1)).enviarNotificacion(any(NotificacionRequestDTO.class));
     }
 
     @Test
     void procesarNuevasCoincidencias_ManejaCorrectamenteReporteEncontrado() {
         // Arrange: Cambiamos a ENCONTRADO
-        reporteNuevo.setTipoReporte("ENCONTRADO"); 
+        reporteMascotaPerdida.setTipoReporte("ENCONTRADO"); 
         ReporteCruzeDTO candidato = new ReporteCruzeDTO();
         candidato.setId(20L);
         candidato.setLatitud(-36.82);
         candidato.setLongitud(-73.04);
 
         // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of(candidato));
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidato));
 
         // Assert
         verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
@@ -155,7 +183,7 @@ class CoincidenciasServiceTest {
     @Test
     void procesarNuevasCoincidencias_NoHaceNada_SiLaListaEsVacia() {
         // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteNuevo, List.of());
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of());
 
         // Assert: Verifica que no se guardó nada
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));

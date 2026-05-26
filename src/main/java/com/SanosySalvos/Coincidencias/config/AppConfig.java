@@ -14,10 +14,8 @@ public class AppConfig {
     public RestTemplate restTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         
-        // Timeout de conexión: 5 segundos máximo para encontrar el servidor
         factory.setConnectTimeout(5000); 
         
-        // Timeout de lectura: 10 segundos máximo esperando la respuesta
         factory.setReadTimeout(10000); 
         
         return new RestTemplate(factory);
