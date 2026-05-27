@@ -12,7 +12,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -29,11 +28,14 @@ class CoincidenciasServiceTest {
     @Mock
     private CoincidenciasRepository coincidenciasRepository;
 
-    @InjectMocks
-    private CoincidenciasService coincidenciasService;
-
     @Mock
     private NotificacionClient notificacionClient;
+
+    @Mock
+    private ReporteClient reportesClient; // ¡Agregamos el mock del nuevo cliente OpenFeign!
+
+    @InjectMocks
+    private CoincidenciasService coincidenciasService;
 
     private Coincidencias coincidenciaPendiente;
     private ReporteCruzeDTO reporteMascotaPerdida;
@@ -55,40 +57,16 @@ class CoincidenciasServiceTest {
         reporteMascotaPerdida.setLongitud(-73.04);
     }
 
-    @Test
-    void buscarCoincidencias_DeberiaEncontrarUnMatchYNotificar() {
-        // 1. PREPARACIÓN (Arrange)
-        // Creamos un perro "falso" que el microservicio de reportes nos "devolverá"
-        ReporteCruzeDTO reporteFalso = new ReporteCruzeDTO();
-        reporteFalso.setId(10L);
-        reporteFalso.setRaza("Poodle");
-        reporteFalso.setColor("Blanco");
-        reporteFalso.setCorreoUsuario("dueño@test.com");
-
-        // Le decimos a Mockito: "Cuando el servicio llame a OpenFeign, devuélvele esta lista falsa"
-        when(reporteClient.obtenerReportesCercanos(anyDouble(), anyDouble(), anyDouble()))
-                .thenReturn(List.of(reporteFalso));
-
-        // 2. EJECUCIÓN (Act)
-        // Ejecutamos tu método buscando un Poodle Blanco
-        coincidenciasService.buscarCoincidencias(-36.0, -72.0, "Poodle", "Blanco");
-
-        // 3. VERIFICACIÓN (Assert)
-        // Verificamos que OpenFeign efectivamente fue llamado una vez
-        verify(reporteClient, times(1)).obtenerReportesCercanos(-36.0, -72.0, 5000.0);
-        
-        // Aquí podrías verificar que se llamó al NotificacionClient si el match fue exitoso
-        // verify(notificacionClient, times(1)).enviarNotificacion(any());
-    }
-
-    // --- TESTS PARA LA H.U. -4: PROCESAR NUEVAS COINCIDENCIAS ---
+    // --- TESTS PARA LA H.U. -4: PROCESAR NUEVAS COINCIDENCIAS (Orquestación con Feign) ---
 
     @Test
-    void procesarNuevasCoincidencias_GuardaMatch_SiEstaDentroDelRadio() {
-        // Arrange
+    void procesarNuevasCoincidencias_GuardaMatchYNotifica_SiCoincideFisicamente() {
+        // Arrange: Simulamos un candidato que ya está cerca (PostGIS) y coincide en raza y color
         ReporteCruzeDTO candidatoCerca = new ReporteCruzeDTO();
         candidatoCerca.setId(20L);
         candidatoCerca.setTipoReporte("ENCONTRADO");
+        candidatoCerca.setRaza("Poodle");
+        candidatoCerca.setColor("Blanco");
         candidatoCerca.setLatitud(-36.82);
         candidatoCerca.setLongitud(-73.04);
 
@@ -97,33 +75,57 @@ class CoincidenciasServiceTest {
 
         // Assert
         verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
-        
-        // 2. VERIFICACIÓN CRÍTICA: Aseguramos que la notificación se envió
-        // Lo que debes poner (CORRECTO):
         verify(notificacionClient, times(1)).enviarNotificacion(any(NotificacionRequestDTO.class));
     }
 
     @Test
-    void procesarNuevasCoincidencias_NoGuardaMatch_SiEstaFueraDelRadio() {
-        // Arrange: Creamos un candidato con coordenadas muy lejanas (ej. lat/lon 0.0)
-        ReporteCruzeDTO candidatoLejos = new ReporteCruzeDTO();
-        candidatoLejos.setId(30L);
-        candidatoLejos.setTipoReporte("ENCONTRADO");
-        candidatoLejos.setLatitud(0.0);
-        candidatoLejos.setLongitud(0.0);
+    void procesarNuevasCoincidencias_NoGuardaMatch_SiNoCoincideFisicamente() {
+        // Arrange: Simulamos un candidato cerca, pero que es FÍSICAMENTE diferente
+        ReporteCruzeDTO candidatoDiferente = new ReporteCruzeDTO();
+        candidatoDiferente.setId(30L);
+        candidatoDiferente.setTipoReporte("ENCONTRADO");
+        candidatoDiferente.setRaza("Pastor Alemán"); // Raza distinta
+        candidatoDiferente.setColor("Negro");
+        candidatoDiferente.setLatitud(-36.82);
+        candidatoDiferente.setLongitud(-73.04);
 
-       // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoLejos));
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoDiferente));
 
-        // Assert
+        // Assert: No debería guardar ni notificar porque no hacen match
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
-        
-        // 3. Verificamos que NO se notificó
-        // Lo que debes poner (CORRECTO):
         verify(notificacionClient, never()).enviarNotificacion(any(NotificacionRequestDTO.class));
     }
 
-    // --- TESTS PARA LA H.U. -3: DESCARTAR COINCIDENCIA ---
+    @Test
+    void procesarNuevasCoincidencias_NoHaceNada_SiLaListaEsVacia() {
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of());
+
+        // Assert: Verifica que no se guardó nada
+        verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
+    }
+
+    @Test
+    void procesarNuevasCoincidencias_ManejaCorrectamenteReporteEncontrado() {
+        // Arrange: Cambiamos a ENCONTRADO
+        reporteMascotaPerdida.setTipoReporte("ENCONTRADO"); 
+        ReporteCruzeDTO candidato = new ReporteCruzeDTO();
+        candidato.setId(20L);
+        candidato.setTipoReporte("PERDIDO"); // Si uno es encontrado, el otro debe ser perdido
+        candidato.setRaza("Poodle");
+        candidato.setColor("Blanco");
+        candidato.setLatitud(-36.82);
+        candidato.setLongitud(-73.04);
+
+        // Act
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidato));
+
+        // Assert
+        verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
+    }
+
+    // --- TESTS PARA LA H.U. -3: DESCARTAR COINCIDENCIA (Intactos) ---
 
     @Test
     void descartarCoincidencia_Exito_CambiaEstadoADescartado() {
@@ -150,42 +152,91 @@ class CoincidenciasServiceTest {
     }
 
     @Test
-    void procesarNuevasCoincidencias_DeberiaLlamarNotificacionClient_CuandoHayMatch() {
-        // Arrange
-        ReporteCruzeDTO candidatoCerca = new ReporteCruzeDTO();
-        candidatoCerca.setId(20L);
-        candidatoCerca.setLatitud(-36.82);
-        candidatoCerca.setLongitud(-73.04);
-        
-        // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoCerca));
+    void procesarNuevasCoincidencias_NoHaceNada_SiLaListaEsNull() {
+        // Obligamos a evaluar la rama "reportesCandidatos == null"
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, null);
 
-        // Assert: Aquí verificamos que, además de guardar, se llamó al cliente de notificaciones
-        verify(notificacionClient, times(1)).enviarNotificacion(any(NotificacionRequestDTO.class));
+        verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
     }
 
     @Test
-    void procesarNuevasCoincidencias_ManejaCorrectamenteReporteEncontrado() {
-        // Arrange: Cambiamos a ENCONTRADO
-        reporteMascotaPerdida.setTipoReporte("ENCONTRADO"); 
+    void procesarNuevasCoincidencias_NoGuardaMatch_SiRazaOColorSonNull() {
+        // Obligamos a evaluar la rama donde el atributo es nulo
+        reporteMascotaPerdida.setRaza(null); 
+        
         ReporteCruzeDTO candidato = new ReporteCruzeDTO();
         candidato.setId(20L);
         candidato.setLatitud(-36.82);
         candidato.setLongitud(-73.04);
-
-        // Act
+        
         coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidato));
-
-        // Assert
-        verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
+        
+        verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
     }
 
     @Test
-    void procesarNuevasCoincidencias_NoHaceNada_SiLaListaEsVacia() {
-        // Act
-        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of());
+    void procesarNuevasCoincidencias_NoGuardaMatch_SiEstaFueraDelRadio() {
+        // Obligamos a evaluar la rama donde la distancia es mayor a 5km
+        ReporteCruzeDTO candidatoLejos = new ReporteCruzeDTO();
+        candidatoLejos.setId(20L);
+        candidatoLejos.setTipoReporte("ENCONTRADO");
+        candidatoLejos.setRaza("Poodle");
+        candidatoLejos.setColor("Blanco");
+        
+        // Ponemos coordenadas en el hemisferio norte (muy lejos de Chile)
+        candidatoLejos.setLatitud(40.71);
+        candidatoLejos.setLongitud(-74.00);
 
-        // Assert: Verifica que no se guardó nada
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoLejos));
+
+        verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
+    }
+
+    // --- TESTS PARA ALCANZAR EL 100% DE COBERTURA ---
+
+    @Test
+    void procesarNuevasCoincidencias_AjustaSimilitudACero_SiDistanciaEsMuyGrande() {
+        // 1. Inyectamos un radio enorme (20km) para permitir que el perro entre al if,
+        // pero que esté lo suficientemente lejos como para que la similitud dé negativa.
+        org.springframework.test.util.ReflectionTestUtils.setField(coincidenciasService, "radioBusquedaKm", 20.0);
+
+        ReporteCruzeDTO candidatoLejos = new ReporteCruzeDTO();
+        candidatoLejos.setId(99L);
+        candidatoLejos.setTipoReporte("ENCONTRADO");
+        candidatoLejos.setRaza("Poodle");
+        candidatoLejos.setColor("Blanco");
+        
+        // Coordenadas a ~14 kilómetros de distancia del punto original (-36.82)
+        candidatoLejos.setLatitud(-36.95);
+        candidatoLejos.setLongitud(-73.04);
+
+        // 2. Ejecutamos
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidatoLejos));
+
+        // 3. Verificamos que se guardó. Al entrar, la línea 'porcentaje = 0.0' será ejecutada.
+        verify(coincidenciasRepository, times(1)).save(any(Coincidencias.class));
+        
+        // Limpiamos el valor inyectado para no afectar otros tests
+        org.springframework.test.util.ReflectionTestUtils.setField(coincidenciasService, "radioBusquedaKm", 0.0);
+    }
+
+    @Test
+    void procesarNuevasCoincidencias_NoGuardaMatch_SiColorEsNull() {
+        // Obligamos a evaluar específicamente la rama donde el COLOR es nulo
+        reporteMascotaPerdida.setColor(null); 
+        
+        ReporteCruzeDTO candidato = new ReporteCruzeDTO();
+        candidato.setId(20L);
+        candidato.setTipoReporte("ENCONTRADO");
+        candidato.setRaza("Poodle");
+        candidato.setColor("Blanco");
+        candidato.setLatitud(-36.82);
+        candidato.setLongitud(-73.04);
+        
+        // Ejecutamos
+        coincidenciasService.procesarNuevasCoincidencias(reporteMascotaPerdida, List.of(candidato));
+        
+        // Verificamos que no pase la validación física
         verify(coincidenciasRepository, never()).save(any(Coincidencias.class));
     }
 }

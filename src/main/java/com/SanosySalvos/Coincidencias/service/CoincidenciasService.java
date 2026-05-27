@@ -25,8 +25,29 @@ public class CoincidenciasService {
     private double radioBusquedaKm;
 
     public void procesarNuevasCoincidencias(ReporteCruzeDTO reporteNuevo, List<ReporteCruzeDTO> reportesCandidatos) {
+        
+        if (reportesCandidatos == null || reportesCandidatos.isEmpty()) {
+            return;
+        }
+
         for (ReporteCruzeDTO candidato : reportesCandidatos) {
             
+            // 1. VALIDACIÓN FÍSICA (Lógica de Negocio Principal)
+            // Verificamos si la raza y el color coinciden ignorando mayúsculas/minúsculas
+            boolean coincideRaza = reporteNuevo.getRaza() != null && 
+                                   reporteNuevo.getRaza().equalsIgnoreCase(candidato.getRaza());
+                                   
+            boolean coincideColor = reporteNuevo.getColor() != null && 
+                                    reporteNuevo.getColor().equalsIgnoreCase(candidato.getColor());
+
+            // Si NO coinciden físicamente, saltamos a la siguiente mascota en la lista
+            if (!coincideRaza || !coincideColor) {
+                continue; 
+            }
+
+            // 2. CÁLCULO DE DISTANCIA Y SIMILITUD
+            // La lista ya viene filtrada por PostGIS, pero usamos Haversine 
+            // para calcular tu porcentaje exacto de similitud.
             double distanciaKm = calcularDistanciaHaversine(
                     reporteNuevo.getLatitud(), reporteNuevo.getLongitud(),
                     candidato.getLatitud(), candidato.getLongitud()
@@ -34,6 +55,8 @@ public class CoincidenciasService {
 
             if (distanciaKm <= radioBusquedaKm) {
                 double porcentaje = 100.0 - (distanciaKm * 10); 
+                // Asegurarnos de que el porcentaje no baje de 0
+                if (porcentaje < 0) porcentaje = 0.0;
 
                 Coincidencias coincidencia = new Coincidencias();
                 coincidencia.setReportePerdidoId(
@@ -45,13 +68,13 @@ public class CoincidenciasService {
                 coincidencia.setPorcentajeSimilitud(Math.round(porcentaje * 100.0) / 100.0);
                 coincidencia.setEstado(EstadoCoincidencia.PENDIENTE);
 
+                // Guardar en la base de datos
                 coincidenciasRepository.save(coincidencia);
 
+                // Configurar y enviar la notificación
                 NotificacionRequestDTO requestDTO = new NotificacionRequestDTO();
-                
                 requestDTO.setIdMascotaPerdida(coincidencia.getReportePerdidoId());
                 requestDTO.setIdMascotaEncontrada(coincidencia.getReporteEncontradoId());
-                
                 requestDTO.setCorreoDueno(reporteNuevo.getCorreoUsuario()); 
                 
                 notificacionClient.enviarNotificacion(requestDTO);
